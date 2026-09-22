@@ -39,6 +39,11 @@
             MinWidth="45.0"
             DoubleTapped="DragBar_DoubleTapped" />
 
+    <!--  Reserves the room of the DWM-drawn caption buttons (see NonClientIslandWindow)  -->
+    <Border x:Name="NativeCaptionButtonsSpacer"
+            Grid.Column="2"
+            Width="0" />
+
     <local:MinMaxCloseControl x:Name="MinMaxCloseControl"
                               Grid.Column="2"
                               HorizontalAlignment="Right" />

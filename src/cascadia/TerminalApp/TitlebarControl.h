@@ -15,6 +15,7 @@ namespace winrt::TerminalApp::implementation
         void PressButton(CaptionButton button);
         safe_void_coroutine ClickButton(CaptionButton button);
         void ReleaseButtons();
+        void SetNativeCaptionButtonsWidth(double widthInDips);
         float CaptionButtonWidth();
 
         bool Focused();
@@ -34,7 +35,10 @@ namespace winrt::TerminalApp::implementation
 
     private:
         void _OnMaximizeOrRestore(byte flag);
+        void _UpdateMinMaxCloseVisibility();
         HWND _window{ nullptr }; // non-owning handle; should not be freed in the dtor.
+        bool _fullscreen{ false };
+        bool _nativeCaptionButtons{ false };
 
         void _backgroundChanged(winrt::Windows::UI::Xaml::Media::Brush brush);
     };

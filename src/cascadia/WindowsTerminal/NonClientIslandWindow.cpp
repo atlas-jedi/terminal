@@ -20,12 +20,26 @@ using namespace ::Microsoft::Console;
 
 static constexpr int AutohideTaskbarSize = 2;
 
+// til::rect::empty() also treats a rect with a negative origin as empty, but
+// window geometry can legitimately be negative (a maximized window starts above
+// the monitor, the island starts 1px below the client origin, ...). This only
+// checks whether the rect has an area.
+static constexpr bool _hasArea(const til::rect& rc) noexcept
+{
+    return rc.right > rc.left && rc.bottom > rc.top;
+}
+
 NonClientIslandWindow::NonClientIslandWindow(const ElementTheme& requestedTheme) noexcept :
     IslandWindow{},
     _backgroundBrushColor{ 0, 0, 0 },
     _theme{ requestedTheme },
     _isMaximized{ false }
 {
+    wchar_t value[2]{};
+    if (GetEnvironmentVariableW(L"WT_NATIVE_CAPTION_BUTTONS", &value[0], ARRAYSIZE(value)) == 1 && value[0] == L'0')
+    {
+        _nativeCaptionButtonsEnabled = false;
+    }
 }
 
 NonClientIslandWindow::~NonClientIslandWindow()
@@ -107,6 +121,26 @@ void NonClientIslandWindow::MakeWindow() noexcept
 LRESULT NonClientIslandWindow::_dragBarNcHitTest(const til::point pointer)
 {
     auto rcParent = GetWindowRect();
+
+    if (_IsNativeCaptionButtonsActive())
+    {
+        // Over DWM's caption buttons, let the hit test fall through to the
+        // top-level window (the island has a hole there, see
+        // _UpdateIslandHole), whose MessageHandler lets DwmDefWindowProc
+        // handle them. Everywhere else we're just the caption.
+        POINT clientPoint{ pointer.x, pointer.y };
+        if (_hasArea(_captionButtonsRect) &&
+            ::ScreenToClient(GetHandle(), &clientPoint) &&
+            _captionButtonsRect.contains(til::point{ clientPoint.x, clientPoint.y }))
+        {
+            return HTTRANSPARENT;
+        }
+
+        const auto resizeBorderHeight = _GetResizeHandleHeight();
+        const auto isOnResizeBorder = pointer.y < rcParent.top + resizeBorderHeight;
+        return isOnResizeBorder ? HTTOP : HTCAPTION;
+    }
+
     // The size of the buttons doesn't change over the life of the application.
     const auto buttonWidthInDips{ _titlebar.CaptionButtonWidth() };
 
@@ -317,7 +351,7 @@ void NonClientIslandWindow::_ResizeDragBarWindow() noexcept
         SetWindowPos(_dragBarWindow.get(),
                      HWND_TOP,
                      rect.left,
-                     rect.top + _GetTopBorderHeight(),
+                     rect.top + _GetTopBorderHeight() + _GetMaximizedContentOffset(),
                      rect.width(),
                      rect.height(),
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -506,6 +540,9 @@ void NonClientIslandWindow::OnSize(const UINT width, const UINT height)
     // when we move between different DPI monitors.
     RefreshCurrentDPI();
     _UpdateFrameMargins();
+
+    _UpdateNativeCaptionButtons();
+    _ScheduleNativeCaptionButtonsUpdate();
 }
 
 // Method Description:
@@ -549,6 +586,10 @@ void NonClientIslandWindow::_OnMaximizeChange() noexcept
 
     // no frame margin when maximized
     _UpdateFrameMargins();
+
+    // We may be in the middle of WM_NCCALCSIZE here, with the client area not
+    // updated yet: the WM_SIZE that follows (OnSize) reads the new layout.
+    _ScheduleNativeCaptionButtonsUpdate();
 }
 
 // Method Description:
@@ -570,7 +611,7 @@ void NonClientIslandWindow::_UpdateIslandPosition(const UINT windowWidth, const 
     // buttons, which will make them clickable. It's perhaps not the right fix,
     // but it works.
     // _GetTopBorderHeight() returns 0 when we're maximized.
-    const auto topBorderHeight = (originalTopHeight == 0) ? -1 : originalTopHeight;
+    const auto topBorderHeight = ((originalTopHeight == 0) ? -1 : originalTopHeight) + _GetMaximizedContentOffset();
 
     const til::point newIslandPos = { 0, topBorderHeight };
 
@@ -610,6 +651,16 @@ int NonClientIslandWindow::_GetResizeHandleHeight() const noexcept
 }
 
 // Method Description:
+// - With native caption buttons, a maximized window's client area starts at the
+//   top of the window, which is above the monitor (see _OnNcCalcSize). Returns
+//   how far down our content has to be moved to be visible: the height of the
+//   resize handle in that case, 0 otherwise.
+int NonClientIslandWindow::_GetMaximizedContentOffset() const noexcept
+{
+    return (_isMaximized && !_fullscreen && _IsNativeCaptionButtonsActive()) ? _GetResizeHandleHeight() : 0;
+}
+
+// Method Description:
 // - Responds to the WM_NCCALCSIZE message by calculating and creating the new
 //   window frame.
 [[nodiscard]] LRESULT NonClientIslandWindow::_OnNcCalcSize(const WPARAM wParam, const LPARAM lParam) noexcept
@@ -644,7 +695,7 @@ int NonClientIslandWindow::_GetResizeHandleHeight() const noexcept
     // We don't need this correction when we're fullscreen. We will have the
     // WS_POPUP size, so we don't have to worry about borders, and the default
     // frame will be fine.
-    if (_isMaximized && !_fullscreen)
+    if (_isMaximized && !_fullscreen && !_IsNativeCaptionButtonsActive())
     {
         // When a window is maximized, its size is actually a little bit more
         // than the monitor's work area. The window is positioned and sized in
@@ -652,6 +703,11 @@ int NonClientIslandWindow::_GetResizeHandleHeight() const noexcept
         // then the window is clipped to the monitor so that the resize handle
         // do not appear because you don't need them (because you can't resize
         // a window when it's maximized unless you restore it).
+        //
+        // With native caption buttons, keep the client area starting at the
+        // top of the window instead: DwmDefWindowProc doesn't hit-test the
+        // caption buttons at all if their area sticks out of the client area.
+        // Our content is moved down instead, see _GetMaximizedContentOffset.
         newSize.top += _GetResizeHandleHeight();
     }
 
@@ -894,6 +950,17 @@ void NonClientIslandWindow::_UpdateFrameMargins() const noexcept
     {
         margins.cyTopHeight = 1;
     }
+    else if (_IsNativeCaptionButtonsActive())
+    {
+        // DWM only draws the caption buttons (and DwmDefWindowProc only
+        // hit-tests them) inside the extended frame. So keep the whole top part
+        // of the frame extended in every state, maximized and translucent tab
+        // rows included. The island covers all of it, except for the hole
+        // where the caption buttons are (see _UpdateIslandHole).
+        RECT frame = {};
+        winrt::check_bool(::AdjustWindowRectExForDpi(&frame, GetWindowStyle(_window.get()), FALSE, 0, _currentDpi));
+        margins.cyTopHeight = -frame.top;
+    }
     else if (_GetTopBorderHeight() != 0)
     {
         RECT frame = {};
@@ -956,8 +1023,46 @@ void NonClientIslandWindow::_UpdateFrameMargins() const noexcept
                                                             WPARAM const wParam,
                                                             LPARAM const lParam) noexcept
 {
+    if (_IsNativeCaptionButtonsActive())
+    {
+        // Let DWM handle its own caption buttons (hit testing, hover, press,
+        // snap layouts), like any custom frame should:
+        // https://learn.microsoft.com/windows/win32/dwm/customframe
+        // For WM_NCHITTEST, only take the caption buttons: the rest of the
+        // frame keeps our own hit testing (resize border, drag area).
+        LRESULT dwmResult = 0;
+        if (DwmDefWindowProc(_window.get(), message, wParam, lParam, &dwmResult) &&
+            (message != WM_NCHITTEST || dwmResult == HTMINBUTTON || dwmResult == HTMAXBUTTON || dwmResult == HTCLOSE))
+        {
+            return dwmResult;
+        }
+    }
+
     switch (message)
     {
+    case WM_TIMER:
+        if (wParam == NativeCaptionButtonsTimerId)
+        {
+            KillTimer(_window.get(), NativeCaptionButtonsTimerId);
+            _UpdateNativeCaptionButtons();
+            return 0;
+        }
+        break;
+    case WM_WINDOWPOSCHANGED:
+        // Pick up the caption buttons as soon as we're shown, instead of
+        // showing our own ones until the timer fires.
+        if (WI_IsFlagSet(reinterpret_cast<const WINDOWPOS*>(lParam)->flags, SWP_SHOWWINDOW))
+        {
+            _UpdateNativeCaptionButtons();
+        }
+        break;
+    case WM_SHOWWINDOW:
+    case WM_THEMECHANGED:
+    case WM_DWMCOMPOSITIONCHANGED:
+        // DWM lays out its caption buttons again after these.
+        _UpdateFrameMargins();
+        _ScheduleNativeCaptionButtonsUpdate();
+        break;
     case WM_NCACTIVATE:
     {
         const bool activated = LOWORD(wParam) != 0;
@@ -1131,6 +1236,9 @@ void NonClientIslandWindow::_SetIsBorderless(const bool borderlessEnabled)
                  windowPos.width(),
                  windowPos.height(),
                  SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+    _UpdateNativeCaptionButtons();
+    _ScheduleNativeCaptionButtonsUpdate();
 }
 
 // Method Description:
@@ -1150,6 +1258,10 @@ void NonClientIslandWindow::_SetIsFullscreen(const bool fullscreenEnabled)
     // So, make sure to update the size of the drag region here, so that it
     // _definitely_ goes away.
     _ResizeDragBarWindow();
+
+    _UpdateFrameMargins();
+    _UpdateNativeCaptionButtons();
+    _ScheduleNativeCaptionButtonsUpdate();
 }
 
 void NonClientIslandWindow::SetShowTabsFullscreen(const bool newShowTabsFullscreen)
@@ -1206,4 +1318,143 @@ void NonClientIslandWindow::UseMica(const bool newValue, const double titlebarOp
     IslandWindow::UseMica(newValue, titlebarOpacity);
 
     _UpdateFrameMargins();
+}
+
+// Method Description:
+// - Returns true if DWM should draw and handle the caption buttons (the
+//   theme-aware min/max/close), instead of our XAML MinMaxCloseControl. That's
+//   the case whenever the regular titlebar is visible, unless disabled with
+//   WT_NATIVE_CAPTION_BUTTONS=0. The quake window never shows a titlebar, and
+//   owns the island's window region for its dropdown animation.
+bool NonClientIslandWindow::_IsNativeCaptionButtonsActive() const noexcept
+{
+    return _nativeCaptionButtonsEnabled && !_borderless && !_fullscreen && !IsQuakeWindow();
+}
+
+// Method Description:
+// - Re-reads where DWM puts the caption buttons, and updates everything that
+//   depends on it: the hole in the island (our window itself has no
+//   redirection surface, so the hole shows DWM's frame), the space reserved in
+//   the titlebar and the drag bar. DWM is the single source of truth here,
+//   since it's also what DwmDefWindowProc hit-tests against, and what theme
+//   tools (msstyles, DWM mods) customize.
+void NonClientIslandWindow::_UpdateNativeCaptionButtons() noexcept
+{
+    const auto hwnd = _window.get();
+    til::rect newRect{};
+
+    if (_titlebar && _IsNativeCaptionButtonsActive() && IsWindowVisible(hwnd) && !IsIconic(hwnd))
+    {
+        // The bounds are relative to the window rect (undefined while
+        // minimized or hidden, hence the checks above).
+        RECT bounds{};
+        RECT windowRect{};
+        POINT clientOrigin{ 0, 0 };
+        if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CAPTION_BUTTON_BOUNDS, &bounds, sizeof(bounds))) &&
+            bounds.right > bounds.left && bounds.bottom > bounds.top &&
+            ::GetWindowRect(hwnd, &windowRect) &&
+            ::ClientToScreen(hwnd, &clientOrigin))
+        {
+            const auto dx = windowRect.left - clientOrigin.x;
+            const auto dy = windowRect.top - clientOrigin.y;
+            newRect = til::rect{ bounds.left + dx, bounds.top + dy, bounds.right + dx, bounds.bottom + dy };
+        }
+    }
+
+    // The island may have moved or resized even if the buttons didn't.
+    const auto rectChanged = newRect != _captionButtonsRect;
+    _captionButtonsRect = newRect;
+    _UpdateIslandHole();
+
+    if (!rectChanged)
+    {
+        return;
+    }
+
+    if (_titlebar)
+    {
+        try
+        {
+            // Reserve everything from the left of the buttons to the right edge
+            // of the client area, so the tabs always stop before the buttons.
+            double widthInDips = 0.0;
+            RECT clientRect{};
+            if (_hasArea(newRect) && ::GetClientRect(hwnd, &clientRect))
+            {
+                const auto widthInPixels = std::max(0L, clientRect.right - newRect.left);
+                widthInDips = widthInPixels / GetCurrentDpiScale();
+            }
+            _titlebar.SetNativeCaptionButtonsWidth(widthInDips);
+        }
+        CATCH_LOG();
+    }
+
+    _ResizeDragBarWindow();
+}
+
+// Method Description:
+// - DWM lays out its caption buttons asynchronously after a size, DPI or theme
+//   change, so what we read right away might still be the previous layout.
+//   Read it again once things have settled. Re-arming the timer while it's
+//   pending (e.g. during a live resize) just postpones it.
+void NonClientIslandWindow::_ScheduleNativeCaptionButtonsUpdate() noexcept
+{
+    if (_nativeCaptionButtonsEnabled)
+    {
+        SetTimer(_window.get(), NativeCaptionButtonsTimerId, 100, nullptr);
+    }
+}
+
+// Method Description:
+// - Cuts a hole in the XAML island where the caption buttons are, so that
+//   DWM's buttons can be seen, and so that the island doesn't steal the mouse
+//   from them. The region is way bigger than the island, so that it never has
+//   to change when the island is resized - only when the hole moves.
+void NonClientIslandWindow::_UpdateIslandHole() noexcept
+{
+    if (!_interopWindowHandle || IsQuakeWindow())
+    {
+        return;
+    }
+
+    til::rect hole{};
+    RECT islandRect{};
+    if (_hasArea(_captionButtonsRect) && ::GetWindowRect(_interopWindowHandle, &islandRect))
+    {
+        // Island coordinates: the island isn't at the client origin (see
+        // _UpdateIslandPosition).
+        POINT islandOrigin{ islandRect.left, islandRect.top };
+        if (::ScreenToClient(_window.get(), &islandOrigin))
+        {
+            hole = til::rect{
+                _captionButtonsRect.left - islandOrigin.x,
+                _captionButtonsRect.top - islandOrigin.y,
+                _captionButtonsRect.right - islandOrigin.x,
+                _captionButtonsRect.bottom - islandOrigin.y,
+            };
+        }
+    }
+
+    if (hole == _islandHoleRect)
+    {
+        return;
+    }
+    _islandHoleRect = hole;
+
+    if (!_hasArea(hole))
+    {
+        SetWindowRgn(_interopWindowHandle, nullptr, TRUE);
+        return;
+    }
+
+    static constexpr int RegionExtent = 1 << 20;
+    wil::unique_hrgn region{ CreateRectRgn(0, 0, RegionExtent, RegionExtent) };
+    wil::unique_hrgn holeRegion{ CreateRectRgn(hole.left, hole.top, hole.right, hole.bottom) };
+    if (region && holeRegion &&
+        CombineRgn(region.get(), region.get(), holeRegion.get(), RGN_DIFF) != ERROR &&
+        SetWindowRgn(_interopWindowHandle, region.get(), TRUE))
+    {
+        // The system owns the region now.
+        region.release();
+    }
 }

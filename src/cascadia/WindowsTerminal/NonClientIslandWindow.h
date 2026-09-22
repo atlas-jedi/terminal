@@ -69,12 +69,21 @@ private:
     bool _isMaximized;
     bool _trackingMouse{ false };
 
+    // Native caption buttons: DWM draws (and hit-tests) the theme-aware
+    // min/max/close buttons, instead of our XAML ones. Set the environment
+    // variable WT_NATIVE_CAPTION_BUTTONS=0 to get the XAML buttons back.
+    static constexpr UINT_PTR NativeCaptionButtonsTimerId{ 0x57544E43 }; // 'WTNC'
+    bool _nativeCaptionButtonsEnabled{ true };
+    til::rect _captionButtonsRect{}; // in client coordinates, empty when inactive
+    til::rect _islandHoleRect{}; // in island coordinates, last hole applied
+
     [[nodiscard]] static LRESULT __stdcall _StaticInputSinkWndProc(HWND const window, UINT const message, WPARAM const wparam, LPARAM const lparam) noexcept;
     [[nodiscard]] LRESULT _InputSinkMessageHandler(UINT const message, WPARAM const wparam, LPARAM const lparam) noexcept;
 
     void _ResizeDragBarWindow() noexcept;
 
     int _GetResizeHandleHeight() const noexcept;
+    int _GetMaximizedContentOffset() const noexcept;
     til::rect _GetDragAreaRect() const noexcept;
     int _GetTopBorderHeight() const noexcept;
     LRESULT _dragBarNcHitTest(const til::point pointer);
@@ -94,6 +103,11 @@ private:
     void _UpdateMaximizedState();
     void _UpdateIslandPosition(const UINT windowWidth, const UINT windowHeight);
     void _UpdateTitlebarVisibility();
+
+    bool _IsNativeCaptionButtonsActive() const noexcept;
+    void _UpdateNativeCaptionButtons() noexcept;
+    void _ScheduleNativeCaptionButtonsUpdate() noexcept;
+    void _UpdateIslandHole() noexcept;
 
     struct Revokers
     {

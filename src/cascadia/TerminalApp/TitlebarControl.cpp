@@ -77,7 +77,7 @@ namespace winrt::TerminalApp::implementation
                                            const Windows::UI::Xaml::SizeChangedEventArgs& /*e*/)
     {
         const auto windowWidth = ActualWidth();
-        const auto minMaxCloseWidth = MinMaxCloseControl().ActualWidth();
+        const auto minMaxCloseWidth = _nativeCaptionButtons ? NativeCaptionButtonsSpacer().Width() : MinMaxCloseControl().ActualWidth();
         const auto dragBarMinWidth = DragBar().MinWidth();
         const auto maxWidth = windowWidth - minMaxCloseWidth - dragBarMinWidth;
         // Only set our MaxWidth if it's greater than 0. Setting it to a
@@ -90,7 +90,27 @@ namespace winrt::TerminalApp::implementation
 
     void TitlebarControl::FullscreenChanged(const bool fullscreen)
     {
-        MinMaxCloseControl().Visibility(fullscreen ? Visibility::Collapsed : Visibility::Visible);
+        _fullscreen = fullscreen;
+        _UpdateMinMaxCloseVisibility();
+    }
+
+    // When the window lets DWM draw the (theme-aware) caption buttons, hide
+    // ours and just reserve the room DWM needs, so the tabs never go under the
+    // buttons. A width of 0 brings our own buttons back.
+    void TitlebarControl::SetNativeCaptionButtonsWidth(double widthInDips)
+    {
+        _nativeCaptionButtons = widthInDips > 0;
+        NativeCaptionButtonsSpacer().Width(_nativeCaptionButtons ? widthInDips : 0.0);
+        _UpdateMinMaxCloseVisibility();
+
+        // Our own size didn't change, so SizeChanged won't fire on its own.
+        Root_SizeChanged(nullptr, nullptr);
+    }
+
+    void TitlebarControl::_UpdateMinMaxCloseVisibility()
+    {
+        const auto visible = !_fullscreen && !_nativeCaptionButtons;
+        MinMaxCloseControl().Visibility(visible ? Visibility::Visible : Visibility::Collapsed);
     }
 
     void TitlebarControl::_OnMaximizeOrRestore(byte flag)
