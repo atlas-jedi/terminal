@@ -5,6 +5,7 @@
 #include <LibraryResources.h>
 #include "ColorPickupFlyout.h"
 #include "Tab.h"
+#include "TabHeaderControl.h"
 #include "SettingsPaneContent.h"
 #include "Tab.g.cpp"
 #include "Utils.h"
@@ -160,6 +161,16 @@ namespace winrt::TerminalApp::implementation
             if (auto tab{ weakThis.get() })
             {
                 tab->ActivateTabRenamer();
+            }
+        });
+
+        // Some of our colors, and the glow of our title, depend on whether
+        // we're selected. That can change without our colors being applied
+        // again, e.g. when a tab gets removed.
+        TabViewItem().RegisterPropertyChangedCallback(winrt::WUX::Controls::Primitives::SelectorItem::IsSelectedProperty(), [weakThis = get_weak()](auto&&, auto&&) {
+            if (auto tab{ weakThis.get() })
+            {
+                tab->_RecalculateAndApplyTabColor();
             }
         });
 
@@ -2224,13 +2235,15 @@ namespace winrt::TerminalApp::implementation
 
     void Tab::ThemeColor(const winrt::Microsoft::Terminal::Settings::Model::ThemeColor& focused,
                          const winrt::Microsoft::Terminal::Settings::Model::ThemeColor& unfocused,
-                         const til::color& tabRowColor)
+                         const til::color& tabRowColor,
+                         const til::color& tabRowBackdrop)
     {
         ASSERT_UI_THREAD();
 
         _themeColor = focused;
         _unfocusedThemeColor = unfocused;
         _tabRowColor = tabRowColor;
+        _tabRowBackdrop = tabRowBackdrop;
         _RecalculateAndApplyTabColor();
     }
 
@@ -2297,33 +2310,16 @@ namespace winrt::TerminalApp::implementation
         Media::SolidColorBrush deselectedFontBrush{};
         Media::SolidColorBrush secondaryFontBrush{};
         Media::SolidColorBrush hoverTabBrush{};
+        Media::SolidColorBrush pressedTabBrush{};
         Media::SolidColorBrush subtleFillColorSecondaryBrush;
         Media::SolidColorBrush subtleFillColorTertiaryBrush;
 
-        // calculate the luminance of the current color and select a font
-        // color based on that
-        // see https://www.w3.org/TR/WCAG20/#relativeluminancedef
-        if (ColorFix::GetLightness(color) >= lightnessThreshold)
-        {
-            auto subtleFillColorSecondary = winrt::Windows::UI::Colors::Black();
-            subtleFillColorSecondary.A = 0x09;
-            subtleFillColorSecondaryBrush.Color(subtleFillColorSecondary);
-            auto subtleFillColorTertiary = winrt::Windows::UI::Colors::Black();
-            subtleFillColorTertiary.A = 0x06;
-            subtleFillColorTertiaryBrush.Color(subtleFillColorTertiary);
-        }
-        else
-        {
-            auto subtleFillColorSecondary = winrt::Windows::UI::Colors::White();
-            subtleFillColorSecondary.A = 0x0F;
-            subtleFillColorSecondaryBrush.Color(subtleFillColorSecondary);
-            auto subtleFillColorTertiary = winrt::Windows::UI::Colors::White();
-            subtleFillColorTertiary.A = 0x0A;
-            subtleFillColorTertiaryBrush.Color(subtleFillColorTertiary);
-        }
+        // What the tab row looks like: a see-through one shows its backdrop
+        // (see TerminalPage::_updateThemeColors).
+        const auto tabRowActualColor = _tabRowColor.layer_over(_tabRowBackdrop);
 
         // The tab font should be based on the evaluated appearance of the tab color layered on tab row.
-        const auto layeredTabColor = color.layer_over(_tabRowColor);
+        const auto layeredTabColor = color.layer_over(tabRowActualColor);
         if (ColorFix::GetLightness(layeredTabColor) >= lightnessThreshold)
         {
             fontBrush.Color(winrt::Windows::UI::Colors::Black());
@@ -2376,6 +2372,7 @@ namespace winrt::TerminalApp::implementation
 
         hoverTabBrush.Color(color);
         hoverTabBrush.Opacity(0.6);
+        pressedTabBrush.Color(color);
 
         // Account for the color of the tab row when setting the color of text
         // on inactive tabs. Consider:
@@ -2385,14 +2382,62 @@ namespace winrt::TerminalApp::implementation
         //
         // We don't want that to result in white text on a white tab row for
         // inactive tabs.
-        const auto deselectedActualColor = deselectedTabColor.layer_over(_tabRowColor);
-        if (ColorFix::GetLightness(deselectedActualColor) >= lightnessThreshold)
+        const auto deselectedActualColor = deselectedTabColor.layer_over(tabRowActualColor);
+        const auto deselectedIsBright = ColorFix::GetLightness(deselectedActualColor) >= lightnessThreshold;
+        if (deselectedIsBright)
         {
             deselectedFontBrush.Color(winrt::Windows::UI::Colors::Black());
         }
         else
         {
             deselectedFontBrush.Color(winrt::Windows::UI::Colors::White());
+        }
+
+        // On a see-through tab row (DWM's glass is behind it, see
+        // NonClientIslandWindow), deselected tabs that are see-through too have
+        // their text right on the glass. Like Win7 did for text on glass, give
+        // that text a glow of the opposite color. Transparent tabs also get
+        // veiled with that color on hover and press, instead of previewing the
+        // selected tab's color, which would need the opposite text color.
+        const auto seeThroughRow = _tabRowColor.a != 255;
+        const til::color glowColor{ deselectedIsBright ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black() };
+        const auto veil = seeThroughRow && deselectedTabColor.a == 0;
+        // The close button's own hover and press colors apply in every state
+        // of the tab, so they also depend on whether it's selected.
+        const auto veilCloseButton = veil && !TabViewItem().IsSelected();
+        _textGlowOnGlass = seeThroughRow && deselectedTabColor.a != 255;
+        _textGlowColor = glowColor;
+        if (veil)
+        {
+            hoverTabBrush.Color(glowColor.with_alpha(HoverVeilAlpha));
+            hoverTabBrush.Opacity(1.0);
+            pressedTabBrush.Color(glowColor.with_alpha(PressedVeilAlpha));
+        }
+        const auto& hoverFontBrush = veil ? deselectedFontBrush : fontBrush;
+        const auto& pressedFontBrush = veil ? deselectedFontBrush : fontBrush;
+        const auto& closeHoverFontBrush = veilCloseButton ? deselectedFontBrush : fontBrush;
+        const auto& closePressedFontBrush = veilCloseButton ? deselectedFontBrush : secondaryFontBrush;
+
+        // The close button gets a subtle background on hover and press, which
+        // has to stand out against what's behind it.
+        const auto closeButtonOnBright = veilCloseButton ? deselectedIsBright : ColorFix::GetLightness(color) >= lightnessThreshold;
+        if (closeButtonOnBright)
+        {
+            auto subtleFillColorSecondary = winrt::Windows::UI::Colors::Black();
+            subtleFillColorSecondary.A = 0x09;
+            subtleFillColorSecondaryBrush.Color(subtleFillColorSecondary);
+            auto subtleFillColorTertiary = winrt::Windows::UI::Colors::Black();
+            subtleFillColorTertiary.A = 0x06;
+            subtleFillColorTertiaryBrush.Color(subtleFillColorTertiary);
+        }
+        else
+        {
+            auto subtleFillColorSecondary = winrt::Windows::UI::Colors::White();
+            subtleFillColorSecondary.A = 0x0F;
+            subtleFillColorSecondaryBrush.Color(subtleFillColorSecondary);
+            auto subtleFillColorTertiary = winrt::Windows::UI::Colors::White();
+            subtleFillColorTertiary.A = 0x0A;
+            subtleFillColorTertiaryBrush.Color(subtleFillColorTertiary);
         }
 
         // Add the empty theme dictionaries
@@ -2420,22 +2465,22 @@ namespace winrt::TerminalApp::implementation
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderBackground"), selectedTabBrush);
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundSelected"), selectedTabBrush);
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundPointerOver"), isHighContrast ? fontBrush : hoverTabBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundPressed"), selectedTabBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderBackgroundPressed"), pressedTabBrush);
 
             // TabViewItem.Foreground (aka text)
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForeground"), deselectedFontBrush);
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForegroundSelected"), fontBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForegroundPointerOver"), isHighContrast ? selectedTabBrush : fontBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForegroundPressed"), fontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForegroundPointerOver"), isHighContrast ? selectedTabBrush : hoverFontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderForegroundPressed"), pressedFontBrush);
 
             // TabViewItem.CloseButton.Foreground (aka X)
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderCloseButtonForeground"), deselectedFontBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderCloseButtonForegroundPressed"), isHighContrast ? deselectedFontBrush : secondaryFontBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderCloseButtonForegroundPointerOver"), isHighContrast ? deselectedFontBrush : fontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderCloseButtonForegroundPressed"), isHighContrast ? deselectedFontBrush : closePressedFontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderCloseButtonForegroundPointerOver"), isHighContrast ? deselectedFontBrush : closeHoverFontBrush);
 
             // TabViewItem.CloseButton.Foreground _when_ interacting with the tab
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderPressedCloseButtonForeground"), fontBrush);
-            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderPointerOverCloseButtonForeground"), isHighContrast ? selectedTabBrush : fontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderPressedCloseButtonForeground"), pressedFontBrush);
+            currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderPointerOverCloseButtonForeground"), isHighContrast ? selectedTabBrush : hoverFontBrush);
             currentDictionary.Insert(winrt::box_value(L"TabViewItemHeaderSelectedCloseButtonForeground"), fontBrush);
 
             // TabViewItem.CloseButton.Background (aka X button)
@@ -2529,6 +2574,9 @@ namespace winrt::TerminalApp::implementation
         // valid hit test target. That makes sense.
         TabViewItem().Background(WUX::Media::SolidColorBrush{ Windows::UI::Colors::Transparent() });
 
+        // We don't know the text color the TabView defaults come with.
+        _textGlowOnGlass = false;
+
         _RefreshVisualState();
     }
 
@@ -2566,6 +2614,18 @@ namespace winrt::TerminalApp::implementation
             VisualStateManager::GoToState(item, L"Selected", true);
             VisualStateManager::GoToState(item, L"Normal", true);
         }
+
+        _UpdateHeaderTextGlow();
+    }
+
+    // Method Description:
+    // - Deselected tabs sit right on the tab row: when that's see-through
+    //   (DWM's glass), their title gets a Win7-style glow. The selected tab
+    //   has its own opaque color, so it doesn't.
+    void Tab::_UpdateHeaderTextGlow()
+    {
+        const auto enabled = _textGlowOnGlass && !TabViewItem().IsSelected();
+        winrt::get_self<implementation::TabHeaderControl>(_headerControl)->SetTextGlow(enabled, _textGlowColor);
     }
 
     TabCloseButtonVisibility Tab::CloseButtonVisibility()

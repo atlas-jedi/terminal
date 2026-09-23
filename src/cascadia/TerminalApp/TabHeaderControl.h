@@ -4,6 +4,7 @@
 #pragma once
 
 #include "winrt/Microsoft.UI.Xaml.Controls.h"
+#include <winrt/Windows.UI.Composition.h>
 
 #include "TabHeaderControl.g.h"
 
@@ -19,6 +20,8 @@ namespace winrt::TerminalApp::implementation
 
         bool InRename();
 
+        void SetTextGlow(bool enabled, til::color color);
+
         til::event<TerminalApp::TitleChangeRequestedArgs> TitleChangeRequested;
         til::typed_event<> RenameEnded;
 
@@ -31,7 +34,13 @@ namespace winrt::TerminalApp::implementation
         bool _receivedKeyDown{ false };
         bool _renameCancelled{ false };
 
+        winrt::Windows::UI::Composition::ContainerVisual _textGlow{ nullptr };
+        bool _textGlowEnabled{ false };
+        til::color _textGlowColor{};
+
         void _CloseRenameBox();
+        void _UpdateTextGlow();
+        winrt::Windows::UI::Composition::ContainerVisual _CreateTextGlow();
     };
 }
 

@@ -105,7 +105,13 @@ namespace winrt::TerminalApp::implementation
 
         void ThemeColor(const winrt::Microsoft::Terminal::Settings::Model::ThemeColor& focused,
                         const winrt::Microsoft::Terminal::Settings::Model::ThemeColor& unfocused,
-                        const til::color& tabRowColor);
+                        const til::color& tabRowColor,
+                        const til::color& tabRowBackdrop);
+
+        // How much a transparent tab (or the new tab button) on a see-through
+        // tab row gets veiled when hovered or pressed.
+        static constexpr uint8_t HoverVeilAlpha{ 0x40 };
+        static constexpr uint8_t PressedVeilAlpha{ 0x60 };
 
         Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility CloseButtonVisibility();
         void CloseButtonVisibility(Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility visible);
@@ -151,6 +157,9 @@ namespace winrt::TerminalApp::implementation
         winrt::Microsoft::Terminal::Settings::Model::ThemeColor _themeColor{ nullptr };
         winrt::Microsoft::Terminal::Settings::Model::ThemeColor _unfocusedThemeColor{ nullptr };
         til::color _tabRowColor;
+        til::color _tabRowBackdrop{ 0, 0, 0 }; // always opaque
+        bool _textGlowOnGlass{ false };
+        til::color _textGlowColor{};
 
         Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility _closeButtonVisibility{ Microsoft::Terminal::Settings::Model::TabCloseButtonVisibility::Always };
 
@@ -245,6 +254,7 @@ namespace winrt::TerminalApp::implementation
         void _ApplyTabColorOnUIThread(const winrt::Windows::UI::Color& color);
         void _ClearTabBackgroundColor();
         void _RefreshVisualState();
+        void _UpdateHeaderTextGlow();
 
         bool _focused() const noexcept;
         void _updateIsClosable();

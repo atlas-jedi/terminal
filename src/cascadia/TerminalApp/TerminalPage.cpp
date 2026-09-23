@@ -4138,13 +4138,28 @@ namespace winrt::TerminalApp::implementation
         constexpr auto lightnessThreshold = 0.6f;
         // TODO GH#3327: Look at what to do with the tab button when we have XAML theming
         const auto IsBrightColor = ColorFix::GetLightness(color) >= lightnessThreshold;
-        const auto isLightAccentColor = ColorFix::GetLightness(accentColor) >= lightnessThreshold;
-        const auto hoverColorAdjustment = isLightAccentColor ? -0.05f : 0.05f;
-        const auto pressedColorAdjustment = isLightAccentColor ? -0.1f : 0.1f;
-
         const auto foregroundColor = IsBrightColor ? Colors::Black() : Colors::White();
-        const auto hoverColor = til::color{ ColorFix::AdjustLightness(accentColor, hoverColorAdjustment) };
-        const auto pressedColor = til::color{ ColorFix::AdjustLightness(accentColor, pressedColorAdjustment) };
+
+        til::color hoverColor;
+        til::color pressedColor;
+        if (accentColor.a == 255)
+        {
+            const auto isLightAccentColor = ColorFix::GetLightness(accentColor) >= lightnessThreshold;
+            const auto hoverColorAdjustment = isLightAccentColor ? -0.05f : 0.05f;
+            const auto pressedColorAdjustment = isLightAccentColor ? -0.1f : 0.1f;
+
+            hoverColor = til::color{ ColorFix::AdjustLightness(accentColor, hoverColorAdjustment) };
+            pressedColor = til::color{ ColorFix::AdjustLightness(accentColor, pressedColorAdjustment) };
+        }
+        else
+        {
+            // A see-through tab row: keep the button see-through as well, and
+            // veil it on hover and press with the color opposite to its glyphs,
+            // like the tabs on it.
+            const til::color veilColor{ IsBrightColor ? Colors::White() : Colors::Black() };
+            hoverColor = veilColor.with_alpha(Tab::HoverVeilAlpha);
+            pressedColor = veilColor.with_alpha(Tab::PressedVeilAlpha);
+        }
 
         Media::SolidColorBrush backgroundBrush{ accentColor };
         Media::SolidColorBrush backgroundHoverBrush{ hoverColor };
@@ -4942,6 +4957,13 @@ namespace winrt::TerminalApp::implementation
         const auto tabViewBackgroundKey = winrt::box_value(L"TabViewBackground");
         const auto backgroundSolidBrush = ThemeLookup(res, requestedTheme, tabViewBackgroundKey).as<Media::SolidColorBrush>();
 
+        // A see-through tab row shows whatever is behind the window (DWM's
+        // frame, Mica, the desktop), which we can't read. The theme's own tab
+        // row color stands in for it, so that the colors we pick for contrast
+        // (the text of the tabs, the new tab button) are picked against an
+        // opaque color, like what the user actually sees.
+        const auto tabRowBackdrop = til::color{ backgroundSolidBrush.Color() }.with_alpha(255);
+
         til::color bgColor = backgroundSolidBrush.Color();
 
         Media::Brush terminalBrush{ nullptr };
@@ -5007,13 +5029,13 @@ namespace winrt::TerminalApp::implementation
             {
                 winrt::com_ptr<Tab> tabImpl;
                 tabImpl.copy_from(winrt::get_self<Tab>(tab));
-                tabImpl->ThemeColor(tabBackground, tabUnfocusedBackground, bgColor);
+                tabImpl->ThemeColor(tabBackground, tabUnfocusedBackground, bgColor, tabRowBackdrop);
             }
         }
         // Update the new tab button to have better contrast with the new color.
         // In theory, it would be convenient to also change these for the
         // inactive tabs as well, but we're leaving that as a follow up.
-        _SetNewTabButtonColor(bgColor, bgColor);
+        _SetNewTabButtonColor(bgColor.layer_over(tabRowBackdrop), bgColor);
 
         // Third: the window frame. This is basically the same logic as the tab row background.
         // We'll set our `FrameBrush` property, for the window to later use.

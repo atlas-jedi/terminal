@@ -84,6 +84,8 @@ private:
 
     int _GetResizeHandleHeight() const noexcept;
     int _GetMaximizedContentOffset() const noexcept;
+    int _GetIslandTop() const noexcept;
+    int _GetTitlebarBottom() const noexcept;
     til::rect _GetDragAreaRect() const noexcept;
     int _GetTopBorderHeight() const noexcept;
     LRESULT _dragBarNcHitTest(const til::point pointer);

@@ -4,10 +4,36 @@
 #include "pch.h"
 #include "TabHeaderControl.h"
 
+#include <uxtheme.h>
+#include <vssym32.h>
+#include <winrt/Windows.UI.Xaml.Hosting.h>
+
 #include "TabHeaderControl.g.cpp"
 
 using namespace winrt;
 using namespace winrt::Microsoft::UI::Xaml;
+
+namespace
+{
+    // Win7 draws text on glass with a glow behind it (DrawThemeTextEx's
+    // DTT_GLOWSIZE). The visual style says how big it is, so it stays the
+    // source of truth; 12px is what Win7's aero.msstyles says.
+    float themeTextGlowSize() noexcept
+    {
+        int size = 0;
+        if (const auto theme = OpenThemeData(nullptr, L"CompositedWindow::Window"))
+        {
+            std::ignore = GetThemeInt(theme, 0, 0, TMT_TEXTGLOWSIZE, &size);
+            CloseThemeData(theme);
+        }
+        return static_cast<float>(size > 0 ? size : 12);
+    }
+
+    // A single shadow of the text is much fainter than Win7's glow, which the
+    // visual style amplifies (its GlowIntensity is 305). Stacking a few of them
+    // gets close.
+    constexpr int TextGlowLayers{ 3 };
+}
 
 namespace winrt::TerminalApp::implementation
 {
@@ -53,6 +79,14 @@ namespace winrt::TerminalApp::implementation
                 }
             }
         });
+
+        // The glow can only be set up once we're in the tree (see _UpdateTextGlow).
+        Loaded([weakThis = get_weak()](auto&&, auto&&) {
+            if (auto self{ weakThis.get() })
+            {
+                self->_UpdateTextGlow();
+            }
+        });
     }
 
     // Method Description:
@@ -75,7 +109,8 @@ namespace winrt::TerminalApp::implementation
         _receivedKeyDown = false;
         _renameCancelled = false;
 
-        HeaderTextBlock().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
+        // The title's glow goes away along with it.
+        HeaderTextPanel().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
         HeaderRenamerTextBox().Visibility(Windows::UI::Xaml::Visibility::Visible);
 
         HeaderRenamerTextBox().Text(Title());
@@ -131,8 +166,82 @@ namespace winrt::TerminalApp::implementation
         if (HeaderRenamerTextBox().Visibility() == Windows::UI::Xaml::Visibility::Visible)
         {
             HeaderRenamerTextBox().Visibility(Windows::UI::Xaml::Visibility::Collapsed);
-            HeaderTextBlock().Visibility(Windows::UI::Xaml::Visibility::Visible);
+            HeaderTextPanel().Visibility(Windows::UI::Xaml::Visibility::Visible);
             RenameEnded.raise(*this, nullptr);
         }
+    }
+
+    // Method Description:
+    // - Turns the Win7-style glow behind the title on or off. The tab asks for
+    //   it when the title is right on DWM's glass (see Tab::_UpdateHeaderTextGlow).
+    // Arguments:
+    // - enabled: whether to show the glow
+    // - color: the color of the glow, the opposite of the text's
+    void TabHeaderControl::SetTextGlow(const bool enabled, const til::color color)
+    {
+        _textGlowEnabled = enabled;
+        _textGlowColor = color;
+        _UpdateTextGlow();
+    }
+
+    void TabHeaderControl::_UpdateTextGlow()
+    {
+        try
+        {
+            if (!_textGlow)
+            {
+                // Nothing to hide, or not in the tree yet, in which case our
+                // Loaded handler calls us again.
+                if (!_textGlowEnabled || !IsLoaded())
+                {
+                    return;
+                }
+                _textGlow = _CreateTextGlow();
+            }
+
+            _textGlow.IsVisible(_textGlowEnabled);
+            for (const auto& layer : _textGlow.Children())
+            {
+                layer.as<winrt::Windows::UI::Composition::SpriteVisual>().Shadow().as<winrt::Windows::UI::Composition::DropShadow>().Color(_textGlowColor);
+            }
+        }
+        // The glow is cosmetic: don't take the tab down with it.
+        CATCH_LOG();
+    }
+
+    // Method Description:
+    // - Creates the glow behind the title: a few shadows in the shape of its
+    //   text, stacked on HeaderTextGlowHost, which covers the same box as the
+    //   text. This is the "drop shadow" recipe of "Using the Visual Layer with
+    //   XAML", except that the shadow doesn't move away from the text.
+    winrt::Windows::UI::Composition::ContainerVisual TabHeaderControl::_CreateTextGlow()
+    {
+        const auto hostVisual = winrt::Windows::UI::Xaml::Hosting::ElementCompositionPreview::GetElementVisual(HeaderTextGlowHost());
+        const auto compositor = hostVisual.Compositor();
+        const auto mask = HeaderTextBlock().GetAlphaMask();
+        const auto blurRadius = themeTextGlowSize();
+
+        // Keep the glow as big as the text, as XAML lays it out.
+        const auto size = compositor.CreateExpressionAnimation(L"host.Size");
+        size.SetReferenceParameter(L"host", hostVisual);
+
+        auto glow = compositor.CreateContainerVisual();
+        for (auto i = 0; i < TextGlowLayers; ++i)
+        {
+            const auto shadow = compositor.CreateDropShadow();
+            shadow.BlurRadius(blurRadius);
+            shadow.Offset({ 0, 0, 0 });
+            shadow.Mask(mask);
+            shadow.Color(_textGlowColor);
+
+            // No brush: only the shadow gets drawn.
+            const auto layer = compositor.CreateSpriteVisual();
+            layer.Shadow(shadow);
+            layer.StartAnimation(L"Size", size);
+            glow.Children().InsertAtTop(layer);
+        }
+
+        winrt::Windows::UI::Xaml::Hosting::ElementCompositionPreview::SetElementChildVisual(HeaderTextGlowHost(), glow);
+        return glow;
     }
 }

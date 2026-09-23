@@ -374,6 +374,13 @@ void NonClientIslandWindow::_ResizeDragBarWindow() noexcept
 void NonClientIslandWindow::_OnDragBarSizeChanged(winrt::Windows::Foundation::IInspectable /*sender*/,
                                                   winrt::Windows::UI::Xaml::SizeChangedEventArgs /*eventArgs*/)
 {
+    // The drag bar is as tall as the titlebar, whose height the extended frame
+    // follows with native caption buttons (see _UpdateFrameMargins).
+    if (_IsNativeCaptionButtonsActive())
+    {
+        _UpdateFrameMargins();
+    }
+
     _ResizeDragBarWindow();
 }
 
@@ -597,21 +604,7 @@ void NonClientIslandWindow::_OnMaximizeChange() noexcept
 //   sizes of our child XAML Islands to match our new sizing.
 void NonClientIslandWindow::_UpdateIslandPosition(const UINT windowWidth, const UINT windowHeight)
 {
-    const auto originalTopHeight = _GetTopBorderHeight();
-    // GH#7422
-    // !! BODGY !!
-    //
-    // For inexplicable reasons, the top row of pixels on our tabs, new tab
-    // button, and caption buttons is totally un-clickable. The mouse simply
-    // refuses to interact with them. So when we're maximized, on certain
-    // monitor configurations, this results in the top row of pixels not
-    // reacting to clicks at all. To obey Fitt's Law, we're gonna shift
-    // the entire island up one pixel. That will result in the top row of pixels
-    // in the window actually being the _second_ row of pixels for those
-    // buttons, which will make them clickable. It's perhaps not the right fix,
-    // but it works.
-    // _GetTopBorderHeight() returns 0 when we're maximized.
-    const auto topBorderHeight = ((originalTopHeight == 0) ? -1 : originalTopHeight) + _GetMaximizedContentOffset();
+    const auto topBorderHeight = _GetIslandTop();
 
     const til::point newIslandPos = { 0, topBorderHeight };
 
@@ -658,6 +651,47 @@ int NonClientIslandWindow::_GetResizeHandleHeight() const noexcept
 int NonClientIslandWindow::_GetMaximizedContentOffset() const noexcept
 {
     return (_isMaximized && !_fullscreen && _IsNativeCaptionButtonsActive()) ? _GetResizeHandleHeight() : 0;
+}
+
+// Method Description:
+// - Returns where the XAML island starts, in client coordinates.
+int NonClientIslandWindow::_GetIslandTop() const noexcept
+{
+    const auto originalTopHeight = _GetTopBorderHeight();
+    // GH#7422
+    // !! BODGY !!
+    //
+    // For inexplicable reasons, the top row of pixels on our tabs, new tab
+    // button, and caption buttons is totally un-clickable. The mouse simply
+    // refuses to interact with them. So when we're maximized, on certain
+    // monitor configurations, this results in the top row of pixels not
+    // reacting to clicks at all. To obey Fitt's Law, we're gonna shift
+    // the entire island up one pixel. That will result in the top row of pixels
+    // in the window actually being the _second_ row of pixels for those
+    // buttons, which will make them clickable. It's perhaps not the right fix,
+    // but it works.
+    // _GetTopBorderHeight() returns 0 when we're maximized.
+    return ((originalTopHeight == 0) ? -1 : originalTopHeight) + _GetMaximizedContentOffset();
+}
+
+// Method Description:
+// - Returns the bottom of the titlebar (where our tab row is), in client
+//   coordinates, or 0 if there's no titlebar yet.
+int NonClientIslandWindow::_GetTitlebarBottom() const noexcept
+{
+    try
+    {
+        if (_titlebar)
+        {
+            // The titlebar is the first row of the island's root grid. XAML
+            // rounds its layout to whole pixels, but stores it as floats.
+            const auto heightInPixels = std::lround(_titlebar.ActualHeight() * GetCurrentDpiScale());
+            return _GetIslandTop() + gsl::narrow_cast<int>(heightInPixels);
+        }
+    }
+    CATCH_LOG();
+
+    return 0;
 }
 
 // Method Description:
@@ -957,9 +991,13 @@ void NonClientIslandWindow::_UpdateFrameMargins() const noexcept
         // of the frame extended in every state, maximized and translucent tab
         // rows included. The island covers all of it, except for the hole
         // where the caption buttons are (see _UpdateIslandHole).
+        //
+        // Also extend it behind the whole titlebar, which is taller than that
+        // part of the frame: a see-through tab row then shows DWM's frame
+        // (glass) all the way down, instead of the desktop.
         RECT frame = {};
         winrt::check_bool(::AdjustWindowRectExForDpi(&frame, GetWindowStyle(_window.get()), FALSE, 0, _currentDpi));
-        margins.cyTopHeight = -frame.top;
+        margins.cyTopHeight = std::max<int>(-frame.top, _GetTitlebarBottom());
     }
     else if (_GetTopBorderHeight() != 0)
     {

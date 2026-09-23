@@ -14,56 +14,85 @@
              MinHeight="16"
              mc:Ignorable="d">
 
-    <StackPanel x:Name="HeaderStackPanel"
-                Orientation="Horizontal">
-        <mux:ProgressRing x:Name="HeaderProgressRing"
-                          Width="15"
-                          Height="15"
-                          MinWidth="0"
-                          MinHeight="0"
-                          Margin="3,0,8,0"
-                          IsActive="{x:Bind TabStatus.IsProgressRingActive, Mode=OneWay}"
-                          IsIndeterminate="{x:Bind TabStatus.IsProgressRingIndeterminate, Mode=OneWay}"
-                          Visibility="{x:Bind TabStatus.IsProgressRingActive, Mode=OneWay}"
-                          Value="{x:Bind TabStatus.ProgressValue, Mode=OneWay}" />
-        <FontIcon x:Name="HeaderBellIndicator"
-                  Margin="0,0,8,0"
-                  FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                  FontSize="12"
-                  Glyph="&#xEA8F;"
-                  Visibility="{x:Bind TabStatus.BellIndicator, Mode=OneWay}" />
-        <FontIcon x:Name="HeaderZoomIcon"
-                  Margin="0,0,8,0"
-                  FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                  FontSize="12"
-                  Glyph="&#xE8A3;"
-                  Visibility="{x:Bind TabStatus.IsPaneZoomed, Mode=OneWay}" />
-        <FontIcon x:Name="HeaderLockIcon"
-                  Margin="0,0,8,0"
-                  FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                  FontSize="12"
-                  Glyph="&#xE72E;"
-                  Visibility="{x:Bind TabStatus.IsReadOnlyActive, Mode=OneWay}" />
-        <FontIcon x:Name="HeaderClosedIcon"
-                  Margin="0,0,8,0"
-                  FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                  FontSize="12"
-                  Glyph="&#xEA39;"
-                  Visibility="{x:Bind TabStatus.IsConnectionClosed, Mode=OneWay}" />
-        <FontIcon x:Name="HeaderBroadcastIcon"
-                  Margin="0,0,8,0"
-                  FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                  FontSize="12"
-                  Glyph="&#xEC05;"
-                  Visibility="{x:Bind TabStatus.IsInputBroadcastActive, Mode=OneWay}" />
-        <TextBlock x:Name="HeaderTextBlock"
-                   Text="{x:Bind Title, Mode=OneWay}"
-                   Visibility="Visible" />
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!--
+            The title, with the Win7-style glow its text gets on DWM's glass
+            (see TabHeaderControl::SetTextGlow). A visual attached to an element
+            is drawn on top of it, so the glow lives on its own element, under
+            the text: HeaderTextGlowHost. The Canvas doesn't ask for any room and
+            both children stretch, so it covers exactly the same box as the
+            text. This panel comes first, so that the icons are drawn on top of
+            the glow too.
+
+            The text is trimmed so that it never overflows the header: an
+            overflowing header gets clipped to its layout slot, glow included.
+        -->
+        <Grid x:Name="HeaderTextPanel"
+              Grid.Column="1"
+              HorizontalAlignment="Left">
+            <Canvas x:Name="HeaderTextGlowHost" />
+            <TextBlock x:Name="HeaderTextBlock"
+                       Text="{x:Bind Title, Mode=OneWay}"
+                       TextTrimming="CharacterEllipsis" />
+        </Grid>
+
+        <StackPanel x:Name="HeaderStackPanel"
+                    Grid.Column="0"
+                    Orientation="Horizontal">
+            <mux:ProgressRing x:Name="HeaderProgressRing"
+                              Width="15"
+                              Height="15"
+                              MinWidth="0"
+                              MinHeight="0"
+                              Margin="3,0,8,0"
+                              IsActive="{x:Bind TabStatus.IsProgressRingActive, Mode=OneWay}"
+                              IsIndeterminate="{x:Bind TabStatus.IsProgressRingIndeterminate, Mode=OneWay}"
+                              Visibility="{x:Bind TabStatus.IsProgressRingActive, Mode=OneWay}"
+                              Value="{x:Bind TabStatus.ProgressValue, Mode=OneWay}" />
+            <FontIcon x:Name="HeaderBellIndicator"
+                      Margin="0,0,8,0"
+                      FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                      FontSize="12"
+                      Glyph="&#xEA8F;"
+                      Visibility="{x:Bind TabStatus.BellIndicator, Mode=OneWay}" />
+            <FontIcon x:Name="HeaderZoomIcon"
+                      Margin="0,0,8,0"
+                      FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                      FontSize="12"
+                      Glyph="&#xE8A3;"
+                      Visibility="{x:Bind TabStatus.IsPaneZoomed, Mode=OneWay}" />
+            <FontIcon x:Name="HeaderLockIcon"
+                      Margin="0,0,8,0"
+                      FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                      FontSize="12"
+                      Glyph="&#xE72E;"
+                      Visibility="{x:Bind TabStatus.IsReadOnlyActive, Mode=OneWay}" />
+            <FontIcon x:Name="HeaderClosedIcon"
+                      Margin="0,0,8,0"
+                      FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                      FontSize="12"
+                      Glyph="&#xEA39;"
+                      Visibility="{x:Bind TabStatus.IsConnectionClosed, Mode=OneWay}" />
+            <FontIcon x:Name="HeaderBroadcastIcon"
+                      Margin="0,0,8,0"
+                      FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                      FontSize="12"
+                      Glyph="&#xEC05;"
+                      Visibility="{x:Bind TabStatus.IsInputBroadcastActive, Mode=OneWay}" />
+        </StackPanel>
+
         <TextBox x:Name="HeaderRenamerTextBox"
+                 Grid.Column="1"
                  Height="24"
                  MinHeight="0"
                  MaxWidth="{x:Bind RenamerMaxWidth, Mode=OneWay}"
                  Padding="4,4,4,3"
+                 HorizontalAlignment="Left"
                  FontSize="12"
                  IsSpellCheckEnabled="False"
                  LostFocus="RenameBoxLostFocusHandler"
@@ -73,5 +102,5 @@
                 <mtu:TextMenuFlyout />
             </TextBox.ContextFlyout>
         </TextBox>
-    </StackPanel>
+    </Grid>
 </UserControl>
