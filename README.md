@@ -1,3 +1,30 @@
+> [!NOTE]
+> **This is Terminal Aero, an unofficial fork of Windows Terminal.** It is not
+> affiliated with, endorsed by, or supported by Microsoft. Windows Terminal is a
+> trademark of Microsoft.
+>
+> The [`native-caption-buttons`](../../tree/native-caption-buttons) branch makes
+> the Terminal fit a Windows 7-style desktop (Aero visual styles, DWM mods like
+> DWMBlurGlass):
+>
+> - With tabs in the titlebar, the minimize/maximize/close buttons are DWM's own,
+>   like File Explorer's, so the visual style draws them (and Snap Layouts work).
+>   Set `WT_NATIVE_CAPTION_BUTTONS=0` to get the regular ones back.
+> - With a see-through tab row, the whole tab row shows DWM's glass, and the
+>   titles of deselected tabs get Windows 7's text glow. A theme for that:
+>
+>   ```json
+>   "theme": "aero",
+>   "themes": [ { "name": "aero",
+>                 "window": { "applicationTheme": "light" },
+>                 "tabRow": { "background": "#00000000", "unfocusedBackground": "#00000000" },
+>                 "tab": { "background": "terminalBackground", "unfocusedBackground": "#00000000" } } ],
+>   "useAcrylicInTabRow": false
+>   ```
+>
+> To install it without building it, get the `.msix` and `install.ps1` from
+> [Releases](../../releases). The upstream README follows.
+
 ![terminal-logos](https://github.com/microsoft/terminal/assets/91625426/333ddc76-8ab2-4eb4-a8c0-4d7b953b1179)
 
 [![Terminal Build Status](https://dev.azure.com/shine-oss/terminal/_apis/build/status%2FTerminal%20CI?branchName=main)](https://dev.azure.com/shine-oss/terminal/_build/latest?definitionId=1&branchName=main)
