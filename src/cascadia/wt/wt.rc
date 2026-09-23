@@ -50,7 +50,7 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_APPICON             ICON                    "..\\..\\..\\res\\terminal.ico"
+IDI_APPICON             ICON                    "..\\..\\..\\res\\terminal\\images-Aero\\terminal.ico"
 
 #endif    // English (United States) resources
 /////////////////////////////////////////////////////////////////////////////

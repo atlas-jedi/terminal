@@ -60,8 +60,9 @@
   </ItemGroup>
 
   <!-- This is picked up by CascadiaResources.build.items. -->
+  <!-- Terminal Aero: the Dev branding gets its own icon (res\terminal\images-Aero, see tools\aero-icon.ps1). -->
   <PropertyGroup Condition="'$(WindowsTerminalBranding)'=='' or '$(WindowsTerminalBranding)'=='Dev'">
-    <WindowsTerminalAssetSuffix>-Dev</WindowsTerminalAssetSuffix>
+    <WindowsTerminalAssetSuffix>-Aero</WindowsTerminalAssetSuffix>
   </PropertyGroup>
   <PropertyGroup Condition="'$(WindowsTerminalBranding)'=='Preview'">
     <WindowsTerminalAssetSuffix>-Pre</WindowsTerminalAssetSuffix>

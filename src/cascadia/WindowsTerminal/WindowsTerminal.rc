@@ -66,9 +66,9 @@ IDI_APPICON             ICON                    "..\\..\\..\\res\\terminal\\imag
 IDI_APPICON_HC_BLACK    ICON                    "..\\..\\..\\res\\terminal\\images-Can\\terminal_contrast-black.ico"
 IDI_APPICON_HC_WHITE    ICON                    "..\\..\\..\\res\\terminal\\images-Can\\terminal_contrast-white.ico"
 #else
-IDI_APPICON             ICON                    "..\\..\\..\\res\\terminal\\images-Dev\\terminal.ico"
-IDI_APPICON_HC_BLACK    ICON                    "..\\..\\..\\res\\terminal\\images-Dev\\terminal_contrast-black.ico"
-IDI_APPICON_HC_WHITE    ICON                    "..\\..\\..\\res\\terminal\\images-Dev\\terminal_contrast-white.ico"
+IDI_APPICON             ICON                    "..\\..\\..\\res\\terminal\\images-Aero\\terminal.ico"
+IDI_APPICON_HC_BLACK    ICON                    "..\\..\\..\\res\\terminal\\images-Aero\\terminal_contrast-black.ico"
+IDI_APPICON_HC_WHITE    ICON                    "..\\..\\..\\res\\terminal\\images-Aero\\terminal_contrast-white.ico"
 #endif
 
 
